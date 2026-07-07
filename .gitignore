@@ -30,25 +30,47 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
-.env*
+# env files (keep .env.example tracked)
+.env
+.env.local
+.env.*.local
+!.env.example
 
 # vercel
 .vercel
 
-
 # typescript
 *.tsbuildinfo
 next-env.d.ts
-local-*
-.claude
-.z-ai-config
+
+# logs
 *.log
 dev.log
 dev.out.log
-test
-prompt
-
 server.log
-# Skills directory
+realtime.log
+
+# database (SQLite — local data, never commit)
+db/*.db
+db/*.db-journal
+db/*.sqlite
+db/*.sqlite3
+
+# local config / sandbox internals
+local-*
+.claude
+.z-ai-config
+.zscripts/
+
+# build artifacts & agent context (not for public repo)
+agent-ctx/
+tool-results/
+upload/
+download/
+
+# verification / test assets
+verify-*.png
+test-*.png
+
+# skills directory
 /skills/
