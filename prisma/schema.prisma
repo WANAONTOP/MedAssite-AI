@@ -1,0 +1,67 @@
+// MedAssist AI — Prisma schema
+// Hackathon Theme 2: AI Automation & Intelligent Agents (Healthcare)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String
+  role      String   @default("PATIENT") // PATIENT | DOCTOR | STAFF
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  cases     Case[]
+  messages  Message[]
+}
+
+model Case {
+  id             String   @id @default(cuid())
+  userId         String
+  chiefComplaint String
+  duration       String   @default("recent")
+  department     String   @default("General Medicine")
+  urgency        String   @default("routine") // routine | urgent
+  flags          String   @default("[]") // JSON-encoded string[]
+  aiNote         String   @default("")
+  status         String   @default("pending") // pending | emergency | solved | unsolved
+  doctorNotes    String   @default("")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reminders Reminder[]
+
+  @@index([status])
+  @@index([userId])
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  userId    String
+  role      String   // user | assistant
+  content   String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Reminder {
+  id        String   @id @default(cuid())
+  caseId    String
+  content   String
+  createdAt DateTime @default(now())
+
+  case Case @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId])
+}

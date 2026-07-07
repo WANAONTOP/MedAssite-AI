@@ -1,0 +1,719 @@
+     1→     1→import React, { useState, useRef, useEffect } from "react";
+     2→     2→import {
+     3→     3→  Pill, Send, Stethoscope, ClipboardList, Users, AlertTriangle, CheckCircle2, XCircle, Clock,
+     4→     4→  FileText, MessageSquareText, Sparkles, Siren, PhoneCall, MapPin, BellRing, X, History,
+     5→     5→  LifeBuoy, Navigation, ShieldCheck, LogOut, ChevronRight, ScanLine, Camera, Upload,
+     6→     6→  RotateCcw, ShieldAlert,
+     7→     7→} from "lucide-react";
+     8→     8→
+     9→     9→const C = {
+    10→    10→  bg: "#0B0F14",
+    11→    11→  panel: "#121821",
+    12→    12→  border: "rgba(47,129,194,0.22)",
+    13→    13→  borderStrong: "#2F81C2",
+    14→    14→  ink: "#F3F6F9",
+    15→    15→  dim: "#8B98A5",
+    16→    16→  blue: "#2F81C2",
+    17→    17→  blueSoft: "rgba(47,129,194,0.16)",
+    18→    18→  red: "#E2495B",
+    19→    19→  redSoft: "rgba(226,73,91,0.14)",
+    20→    20→};
+    21→    21→
+    22→    22→const STATUS_STYLE = {
+    23→    23→  pending: { color: C.blue, bg: C.blueSoft, label: "Pending" },
+    24→    24→  emergency: { color: C.red, bg: C.redSoft, label: "Emergency" },
+    25→    25→  solved: { color: C.ink, bg: "rgba(255,255,255,0.08)", label: "Solved" },
+    26→    26→  unsolved: { color: C.dim, bg: "rgba(255,255,255,0.04)", label: "Unsolved" },
+    27→    27→};
+    28→    28→
+    29→    29→const CLINIC_KNOWLEDGE = `
+    30→    30→You are the triage assistant for Riverside Community Clinic.
+    31→    31→Departments: General Medicine, Dermatology, Orthopedics, Pediatrics, ENT, Cardiology.
+    32→    32→Clinic hours: Mon-Sat 8am-8pm.
+    33→    33→Ask short, focused follow-up questions (max 2) about symptoms, duration, and severity, then recommend a
+    34→    34→department and whether the case seems routine or urgent. Keep replies conversational, warm, under 3 sentences.
+    35→    35→Never diagnose. Never prescribe medication. Always remind that a doctor makes the final call.
+    36→    36→
+    37→    37→EMERGENCY RULE: If signs of a possible medical emergency appear (chest pain, difficulty breathing, stroke signs,
+    38→    38→heavy uncontrolled bleeding, loss of consciousness, severe allergic reaction, suicidal intent), your reply MUST
+    39→    39→start on its own first line with exactly:
+    40→    40→EMERGENCY_FLAG: <very short reason, under 8 words>
+    41→    41→Then a line break, then your normal short reply. Only use this for genuine emergencies.
+    42→    42→`;
+    43→    43→
+    44→    44→const MEDICINE_LENS_KNOWLEDGE = `
+    45→    45→You are a Medicine Lens assistant. The person has shared a photo of a medicine strip, box, bottle, or loose
+    46→    46→pill/tablet. Your job is purely educational identification support, never a prescription.
+    47→    47→
+    48→    48→How to respond:
+    49→    49→- Describe what you can actually read or see: printed name, dosage strength shown ON the packaging (you may
+    50→    50→  repeat text that is visibly printed on the packaging itself, since that's just reading a label), shape, color,
+    51→    51→  or imprint code, if visible.
+    52→    52→- If you recognize the medicine name, briefly explain in plain language what general category it belongs to and
+    53→    53→  what it is commonly used for (e.g. "this is an antihistamine, commonly used for allergy symptoms").
+    54→    54→- NEVER invent a name if the packaging is unreadable or the pill has no visible identifying marks — say clearly
+    55→    55→  that you can't confidently identify it from the photo and recommend showing it to a pharmacist in person instead.
+    56→    56→- NEVER recommend a dosage, tell the person to take/stop/adjust a medicine, or confirm it is safe for them
+    57→    57→  personally — that depends on their medical history.
+    58→    58→- If the photo shows a loose, unmarked pill with no packaging, be extra cautious: state plainly that visual
+    59→    59→  identification of loose pills is unreliable and a pharmacist or poison control should confirm it before anyone
+    60→    60→  takes it.
+    61→    61→- Keep the reply under 5 short sentences. Always close with a reminder to confirm with a pharmacist or doctor
+    62→    62→  before use.
+    63→    63→`;
+    64→    64→
+    65→    65→const NEARBY_HOSPITALS = [
+    66→    66→  { name: "Riverside General Hospital", distance: "1.2 km", eta: "5 min", type: "Multi-specialty" },
+    67→    67→  { name: "St. Mary's Emergency Care", distance: "2.4 km", eta: "9 min", type: "24/7 Emergency" },
+    68→    68→  { name: "Sunrise Family Clinic", distance: "0.8 km", eta: "3 min", type: "Outpatient" },
+    69→    69→];
+    70→    70→
+    71→    71→async function callClaude(messages, systemPrompt, wantJson = false) {
+    72→    72→  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    73→    73→    method: "POST",
+    74→    74→    headers: { "Content-Type": "application/json" },
+    75→    75→    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1000, system: systemPrompt, messages }),
+    76→    76→  });
+    77→    77→  const data = await res.json();
+    78→    78→  const text = (data.content || []).map((b) => b.text || "").join("\n");
+    79→    79→  if (wantJson) {
+    80→    80→    const cleaned = text.replace(/```json|```/g, "").trim();
+    81→    81→    try { return JSON.parse(cleaned); } catch { return null; }
+    82→    82→  }
+    83→    83→  return text;
+    84→    84→}
+    85→    85→
+    86→    86→async function callClaudeVision(base64Data, mediaType, systemPrompt, note) {
+    87→    87→  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    88→    88→    method: "POST",
+    89→    89→    headers: { "Content-Type": "application/json" },
+    90→    90→    body: JSON.stringify({
+    91→    91→      model: "claude-sonnet-4-6",
+    92→    92→      max_tokens: 1000,
+    93→    93→      system: systemPrompt,
+    94→    94→      messages: [
+    95→    95→        {
+    96→    96→          role: "user",
+    97→    97→          content: [
+    98→    98→            { type: "image", source: { type: "base64", media_type: mediaType, data: base64Data } },
+    99→    99→            { type: "text", text: note?.trim() ? `Extra context from the person: ${note.trim()}` : "Please look at this photo of a medicine." },
+   100→   100→          ],
+   101→   101→        },
+   102→   102→      ],
+   103→   103→    }),
+   104→   104→  });
+   105→   105→  const data = await res.json();
+   106→   106→  return (data.content || []).map((b) => b.text || "").join("\n");
+   107→   107→}
+   108→   108→
+   109→   109→function CapsuleLoader() {
+   110→   110→  return (
+   111→   111→    <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+   112→   112→      {[0, 1, 2].map((i) => (
+   113→   113→        <div key={i} style={{ width: 7, height: 14, borderRadius: 999, background: C.blue, animation: `capsuleBounce 1s ${i * 0.15}s ease-in-out infinite` }} />
+   114→   114→      ))}
+   115→   115→    </div>
+   116→   116→  );
+   117→   117→}
+   118→   118→
+   119→   119→function StatusBadge({ status }) {
+   120→   120→  const s = STATUS_STYLE[status] || STATUS_STYLE.pending;
+   121→   121→  return (
+   122→   122→    <span style={{ background: s.bg, color: s.color, fontSize: 11, fontWeight: 700, padding: "4px 11px", borderRadius: 999, letterSpacing: 0.3, display: "inline-flex", alignItems: "center", gap: 5 }}>
+   123→   123→      {status === "emergency" && <span style={{ width: 6, height: 6, borderRadius: 999, background: C.red, animation: "dotPulse 1s infinite" }} />}
+   124→   124→      {s.label}
+   125→   125→    </span>
+   126→   126→  );
+   127→   127→}
+   128→   128→
+   129→   129→function Card({ children, style = {}, ...rest }) {
+   130→   130→  return (
+   131→   131→    <div style={{ background: C.panel, border: `1px solid ${C.border}`, borderRadius: 18, ...style }} {...rest}>
+   132→   132→      {children}
+   133→   133→    </div>
+   134→   134→  );
+   135→   135→}
+   136→   136→
+   137→   137→function PillButton({ children, tone = "blue", onClick, disabled, style = {} }) {
+   138→   138→  const map = {
+   139→   139→    blue: { bg: C.blue, color: "#fff" },
+   140→   140→    red: { bg: C.red, color: "#fff" },
+   141→   141→    outline: { bg: "transparent", color: C.ink, border: `1px solid ${C.border}` },
+   142→   142→    soft: { bg: C.blueSoft, color: C.blue },
+   143→   143→  };
+   144→   144→  const s = map[tone];
+   145→   145→  return (
+   146→   146→    <button onClick={onClick} disabled={disabled} style={{
+   147→   147→      display: "inline-flex", alignItems: "center", gap: 7, background: s.bg, color: s.color,
+   148→   148→      border: s.border || "none", borderRadius: 999, padding: "9px 16px", fontSize: 13, fontWeight: 700,
+   149→   149→      cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.6 : 1, whiteSpace: "nowrap", ...style,
+   150→   150→    }}>{children}</button>
+   151→   151→  );
+   152→   152→}
+   153→   153→
+   154→   154→function EmergencyAlert({ reason, onDismiss }) {
+   155→   155→  const actions = [
+   156→   156→    { label: "Call Ambulance (108)", icon: Siren },
+   157→   157→    { label: "Call Hospital", icon: PhoneCall },
+   158→   158→    { label: "Notify Doctor Now", icon: BellRing },
+   159→   159→    { label: "Nearest Emergency Dept", icon: MapPin },
+   160→   160→  ];
+   161→   161→  return (
+   162→   162→    <Card style={{ padding: 20, marginBottom: 18, background: C.redSoft, border: `1px solid rgba(226,73,91,0.4)`, animation: "emergencyGlow 1.6s ease-in-out infinite", position: "relative" }}>
+   163→   163→      <button onClick={onDismiss} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: C.dim, cursor: "pointer" }}><X size={16} /></button>
+   164→   164→      <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
+   165→   165→        <div style={{ width: 42, height: 42, flexShrink: 0, borderRadius: 12, background: "rgba(0,0,0,0.25)", border: `1px solid rgba(226,73,91,0.4)`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+   166→   166→          <Siren size={21} color={C.red} />
+   167→   167→        </div>
+   168→   168→        <div style={{ flex: 1 }}>
+   169→   169→          <div style={{ fontWeight: 800, fontSize: 16, color: C.red }}>Possible Medical Emergency</div>
+   170→   170→          <div style={{ fontSize: 13.5, color: C.ink, marginTop: 3 }}>{reason} — please don't wait. A case has already been routed to the doctor's urgent queue.</div>
+   171→   171→          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8, marginTop: 14 }}>
+   172→   172→            {actions.map(({ label, icon: Icon }, i) => (
+   173→   173→              <button key={i} style={{ display: "flex", alignItems: "center", gap: 7, background: "rgba(0,0,0,0.2)", color: C.ink, border: `1px solid rgba(226,73,91,0.3)`, borderRadius: 10, padding: "8px 12px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+   174→   174→                <Icon size={14} color={C.red} /> {label}
+   175→   175→              </button>
+   176→   176→            ))}
+   177→   177→          </div>
+   178→   178→          <button onClick={onDismiss} style={{ marginTop: 10, background: "none", border: "none", color: C.dim, fontSize: 11.5, cursor: "pointer", textDecoration: "underline" }}>
+   179→   179→            This isn't an emergency, continue chatting
+   180→   180→          </button>
+   181→   181→        </div>
+   182→   182→      </div>
+   183→   183→    </Card>
+   184→   184→  );
+   185→   185→}
+   186→   186→
+   187→   187→function LoginScreen({ onLogin }) {
+   188→   188→  const [email, setEmail] = useState("");
+   189→   189→  return (
+   190→   190→    <div style={{ minHeight: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: C.bg, padding: 24 }}>
+   191→   191→      <div style={{ display: "flex", maxWidth: 780, width: "100%", borderRadius: 24, overflow: "hidden", border: `1px solid ${C.border}` }}>
+   192→   192→        <div style={{ flex: 1, background: `linear-gradient(160deg, #0E1A26, ${C.blue})`, padding: 36, color: "#fff", display: "flex", flexDirection: "column", justifyContent: "space-between", minHeight: 420 }}>
+   193→   193→          <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+   194→   194→            <div style={{ width: 34, height: 34, borderRadius: 10, background: "rgba(255,255,255,0.15)", display: "flex", alignItems: "center", justifyContent: "center" }}><Pill size={18} /></div>
+   195→   195→            <div style={{ fontWeight: 800, fontSize: 17 }}>MedAssist AI</div>
+   196→   196→          </div>
+   197→   197→          <div>
+   198→   198→            <div style={{ fontSize: 22, fontWeight: 800, lineHeight: 1.3 }}>One shared copilot across your whole clinic.</div>
+   199→   199→            <div style={{ fontSize: 13, opacity: 0.9, marginTop: 10, lineHeight: 1.6 }}>AI assists with triage and documentation. A doctor always confirms the final call.</div>
+   200→   200→          </div>
+   201→   201→          <div style={{ fontSize: 11.5, opacity: 0.8 }}>Riverside Community Clinic &middot; Secure Portal</div>
+   202→   202→        </div>
+   203→   203→
+   204→   204→        <div style={{ flex: 1, background: C.panel, padding: 36 }}>
+   205→   205→          <div style={{ fontWeight: 800, fontSize: 19, color: C.ink }}>Sign in</div>
+   206→   206→          <div style={{ fontSize: 12.5, color: C.dim, marginTop: 4, marginBottom: 24 }}>Access your MedAssist AI workspace</div>
+   207→   207→
+   208→   208→          <label style={{ fontSize: 11.5, fontWeight: 700, color: C.dim }}>EMAIL</label>
+   209→   209→          <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@clinic.com"
+   210→   210→            style={{ width: "100%", marginTop: 5, marginBottom: 14, background: "rgba(255,255,255,0.04)", border: `1px solid ${C.border}`, borderRadius: 12, padding: "10px 14px", fontSize: 14, color: C.ink }} />
+   211→   211→
+   212→   212→          <label style={{ fontSize: 11.5, fontWeight: 700, color: C.dim }}>PASSWORD</label>
+   213→   213→          <input type="password" placeholder="••••••••"
+   214→   214→            style={{ width: "100%", marginTop: 5, marginBottom: 22, background: "rgba(255,255,255,0.04)", border: `1px solid ${C.border}`, borderRadius: 12, padding: "10px 14px", fontSize: 14, color: C.ink }} />
+   215→   215→
+   216→   216→          <PillButton tone="blue" style={{ width: "100%", justifyContent: "center", padding: "11px 0" }} onClick={onLogin}>
+   217→   217→            <ShieldCheck size={15} /> Sign in
+   218→   218→          </PillButton>
+   219→   219→          <div style={{ textAlign: "center", fontSize: 11.5, color: C.dim, marginTop: 14 }}>Demo login — no real credentials required</div>
+   220→   220→        </div>
+   221→   221→      </div>
+   222→   222→    </div>
+   223→   223→  );
+   224→   224→}
+   225→   225→
+   226→   226→export default function MedAssistApp() {
+   227→   227→  const [session, setSession] = useState(null);
+   228→   228→  const [view, setView] = useState("chat");
+   229→   229→  const [messages, setMessages] = useState([{ role: "assistant", content: "Hi, I'm here to help. What symptoms are you experiencing today?" }]);
+   230→   230→  const [input, setInput] = useState("");
+   231→   231→  const [thinking, setThinking] = useState(false);
+   232→   232→  const [summaries, setSummaries] = useState([]);
+   233→   233→  const [selectedSummaryId, setSelectedSummaryId] = useState(null);
+   234→   234→  const [reminders, setReminders] = useState({});
+   235→   235→  const [emergency, setEmergency] = useState(null);
+   236→   236→  const [historyFilter, setHistoryFilter] = useState("all");
+   237→   237→  const scrollRef = useRef(null);
+   238→   238→
+   239→   239→  // Medicine Lens (camera / photo upload identification)
+   240→   240→  const [lensPhoto, setLensPhoto] = useState(null); // { dataUrl, base64, mediaType }
+   241→   241→  const [lensNote, setLensNote] = useState("");
+   242→   242→  const [lensResult, setLensResult] = useState(null);
+   243→   243→  const [lensThinking, setLensThinking] = useState(false);
+   244→   244→  const [lensError, setLensError] = useState(null);
+   245→   245→  const [cameraActive, setCameraActive] = useState(false);
+   246→   246→  const videoRef = useRef(null);
+   247→   247→  const canvasRef = useRef(null);
+   248→   248→  const fileInputRef = useRef(null);
+   249→   249→  const streamRef = useRef(null);
+   250→   250→
+   251→   251→  useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }, [messages]);
+   252→   252→
+   253→   253→  const exchangeCount = messages.filter((m) => m.role === "user").length;
+   254→   254→
+   255→   255→  async function sendMessage() {
+   256→   256→    if (!input.trim() || thinking) return;
+   257→   257→    const next = [...messages, { role: "user", content: input.trim() }];
+   258→   258→    setMessages(next); setInput(""); setThinking(true);
+   259→   259→    try {
+   260→   260→      const reply = await callClaude(next, CLINIC_KNOWLEDGE);
+   261→   261→      const flagMatch = reply && reply.match(/^EMERGENCY_FLAG:\s*(.+?)(?:\n|$)/i);
+   262→   262→      if (flagMatch) {
+   263→   263→        const reason = flagMatch[1].trim();
+   264→   264→        const rest = reply.slice(flagMatch[0].length).trim();
+   265→   265→        setMessages([...next, { role: "assistant", content: rest || "This may be a medical emergency — please see the alert above." }]);
+   266→   266→        setEmergency({ reason });
+   267→   267→        const id = Date.now();
+   268→   268→        setSummaries((s) => [...s, {
+   269→   269→          id, chiefComplaint: reason, duration: "just now", department: "Emergency", urgency: "urgent",
+   270→   270→          flags: ["Auto-flagged by AI as possible emergency"], aiNote: `Emergency auto-detected: ${reason}`,
+   271→   271→          status: "emergency", doctorNotes: "", createdAt: new Date().toLocaleString(),
+   272→   272→        }]);
+   273→   273→      } else {
+   274→   274→        setMessages([...next, { role: "assistant", content: reply || "Sorry, could you rephrase that?" }]);
+   275→   275→      }
+   276→   276→    } catch {
+   277→   277→      setMessages([...next, { role: "assistant", content: "Connection issue — please try again." }]);
+   278→   278→    }
+   279→   279→    setThinking(false);
+   280→   280→  }
+   281→   281→
+   282→   282→  async function generateSummary() {
+   283→   283→    setThinking(true);
+   284→   284→    const transcript = messages.map((m) => `${m.role.toUpperCase()}: ${m.content}`).join("\n");
+   285→   285→    const prompt = `Based on this conversation, output ONLY valid JSON with keys:
+   286→   286→chiefComplaint (string, short), duration (string), department (string), urgency ("routine" or "urgent"),
+   287→   287→flags (array of short strings), aiNote (one sentence summary for the doctor).
+   288→   288→Conversation:\n${transcript}`;
+   289→   289→    const result = await callClaude([{ role: "user", content: prompt }], "You output only raw JSON, nothing else.", true);
+   290→   290→    setThinking(false);
+   291→   291→    if (result) {
+   292→   292→      const id = Date.now();
+   293→   293→      setSummaries((s) => [...s, { id, ...result, status: "pending", doctorNotes: "", createdAt: new Date().toLocaleString() }]);
+   294→   294→      setMessages((m) => [...m, { role: "assistant", content: "Thanks — I've sent a summary to the doctor's queue." }]);
+   295→   295→    }
+   296→   296→  }
+   297→   297→
+   298→   298→  function updateSummary(id, patch) { setSummaries((s) => s.map((x) => (x.id === id ? { ...x, ...patch } : x))); }
+   299→   299→
+   300→   300→  async function draftReminder(summary) {
+   301→   301→    setThinking(true);
+   302→   302→    const prompt = `Write a short, warm SMS reminder (under 300 characters) recommending a visit to
+   303→   303→${summary.department} at Riverside Community Clinic for "${summary.chiefComplaint}". Just the message text.`;
+   304→   304→    const text = await callClaude([{ role: "user", content: prompt }], "You write concise SMS reminders.");
+   305→   305→    setThinking(false);
+   306→   306→    setReminders((r) => ({ ...r, [summary.id]: text }));
+   307→   307→  }
+   308→   308→
+   309→   309→  async function startCamera() {
+   310→   310→    setLensError(null);
+   311→   311→    setLensResult(null);
+   312→   312→    try {
+   313→   313→      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+   314→   314→      streamRef.current = stream;
+   315→   315→      setCameraActive(true);
+   316→   316→      requestAnimationFrame(() => {
+   317→   317→        if (videoRef.current) videoRef.current.srcObject = stream;
+   318→   318→      });
+   319→   319→    } catch {
+   320→   320→      setLensError("Couldn't access the camera. Check permissions, or upload a photo instead.");
+   321→   321→    }
+   322→   322→  }
+   323→   323→
+   324→   324→  function stopCamera() {
+   325→   325→    streamRef.current?.getTracks().forEach((t) => t.stop());
+   326→   326→    streamRef.current = null;
+   327→   327→    setCameraActive(false);
+   328→   328→  }
+   329→   329→
+   330→   330→  function capturePhoto() {
+   331→   331→    const video = videoRef.current;
+   332→   332→    const canvas = canvasRef.current;
+   333→   333→    if (!video || !canvas) return;
+   334→   334→    canvas.width = video.videoWidth;
+   335→   335→    canvas.height = video.videoHeight;
+   336→   336→    canvas.getContext("2d").drawImage(video, 0, 0);
+   337→   337→    const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
+   338→   338→    setLensPhoto({ dataUrl, base64: dataUrl.split(",")[1], mediaType: "image/jpeg" });
+   339→   339→    stopCamera();
+   340→   340→  }
+   341→   341→
+   342→   342→  function handleFileUpload(e) {
+   343→   343→    const file = e.target.files?.[0];
+   344→   344→    if (!file) return;
+   345→   345→    setLensError(null);
+   346→   346→    setLensResult(null);
+   347→   347→    const reader = new FileReader();
+   348→   348→    reader.onload = () => {
+   349→   349→      const dataUrl = reader.result;
+   350→   350→      setLensPhoto({ dataUrl, base64: dataUrl.split(",")[1], mediaType: file.type || "image/jpeg" });
+   351→   351→    };
+   352→   352→    reader.readAsDataURL(file);
+   353→   353→  }
+   354→   354→
+   355→   355→  function resetLens() {
+   356→   356→    setLensPhoto(null);
+   357→   357→    setLensResult(null);
+   358→   358→    setLensError(null);
+   359→   359→    setLensNote("");
+   360→   360→    if (fileInputRef.current) fileInputRef.current.value = "";
+   361→   361→  }
+   362→   362→
+   363→   363→  async function identifyMedicine() {
+   364→   364→    if (!lensPhoto || lensThinking) return;
+   365→   365→    setLensThinking(true);
+   366→   366→    setLensError(null);
+   367→   367→    setLensResult(null);
+   368→   368→    try {
+   369→   369→      const reply = await callClaudeVision(lensPhoto.base64, lensPhoto.mediaType, MEDICINE_LENS_KNOWLEDGE, lensNote);
+   370→   370→      setLensResult(reply || "I couldn't read anything useful from this photo — please try a clearer, well-lit shot, or ask a pharmacist directly.");
+   371→   371→    } catch {
+   372→   372→      setLensError("Connection issue while identifying the photo — please try again.");
+   373→   373→    }
+   374→   374→    setLensThinking(false);
+   375→   375→  }
+   376→   376→
+   377→   377→  if (!session) return <LoginScreen onLogin={() => setSession({})} />;
+   378→   378→
+   379→   379→  const selectedSummary = summaries.find((s) => s.id === selectedSummaryId) || summaries.find((s) => s.status === "pending" || s.status === "emergency");
+   380→   380→  const pendingCount = summaries.filter((s) => s.status === "pending" || s.status === "emergency").length;
+   381→   381→  const historyItems = summaries.filter((s) => s.status === "solved" || s.status === "unsolved");
+   382→   382→  const filteredHistory = historyFilter === "all" ? historyItems : historyItems.filter((s) => s.status === historyFilter);
+   383→   383→
+   384→   384→  const tabs = [
+   385→   385→    { key: "chat", label: "Chat", icon: MessageSquareText },
+   386→   386→    { key: "medicine", label: "Medicine Assistant", icon: ScanLine },
+   387→   387→    { key: "doctor", label: "Doctor", icon: Stethoscope, count: pendingCount },
+   388→   388→    { key: "staff", label: "Staff", icon: Users },
+   389→   389→    { key: "history", label: "History", icon: History },
+   390→   390→    { key: "support", label: "Support", icon: LifeBuoy },
+   391→   391→  ];
+   392→   392→
+   393→   393→  return (
+   394→   394→    <div style={{ fontFamily: "'Inter', sans-serif", background: C.bg, minHeight: "100%", color: C.ink }}>
+   395→   395→      <style>{`
+   396→   396→        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+   397→   397→        @keyframes capsuleBounce { 0%,100% { transform: translateY(0); opacity: .5 } 50% { transform: translateY(-6px); opacity: 1 } }
+   398→   398→        @keyframes dotPulse { 0%,100% { opacity: .4 } 50% { opacity: 1 } }
+   399→   399→        @keyframes emergencyGlow { 0%,100% { box-shadow: 0 0 0px rgba(226,73,91,0.1) } 50% { box-shadow: 0 0 20px rgba(226,73,91,0.25) } }
+   400→   400→        .ma-scroll::-webkit-scrollbar { width: 6px; }
+   401→   401→        .ma-scroll::-webkit-scrollbar-thumb { background: ${C.border}; border-radius: 4px; }
+   402→   402→        ::placeholder { color: #566472; }
+   403→   403→        button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid ${C.blue}; outline-offset: 2px; }
+   404→   404→      `}</style>
+   405→   405→
+   406→   406→      <div style={{ borderBottom: `1px solid ${C.border}`, padding: "14px 28px", background: "rgba(10,15,20,0.9)", position: "sticky", top: 0, zIndex: 10, backdropFilter: "blur(8px)" }}>
+   407→   407→        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12, maxWidth: 1080, margin: "0 auto" }}>
+   408→   408→          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+   409→   409→            <div style={{ width: 34, height: 34, borderRadius: 10, background: C.blueSoft, display: "flex", alignItems: "center", justifyContent: "center" }}><Pill size={17} color={C.blue} /></div>
+   410→   410→            <div>
+   411→   411→              <div style={{ fontWeight: 800, fontSize: 16.5, lineHeight: 1 }}>MedAssist AI</div>
+   412→   412→              <div style={{ fontSize: 10.5, color: C.dim, marginTop: 3 }}>Riverside Community Clinic</div>
+   413→   413→            </div>
+   414→   414→          </div>
+   415→   415→
+   416→   416→          <div style={{ display: "flex", gap: 4, background: "rgba(255,255,255,0.04)", padding: 4, borderRadius: 999, flexWrap: "wrap", border: `1px solid ${C.border}` }}>
+   417→   417→            {tabs.map(({ key, label, icon: Icon, count }) => (
+   418→   418→              <button key={key} onClick={() => setView(key)} style={{
+   419→   419→                display: "flex", alignItems: "center", gap: 6, border: "none", borderRadius: 999, padding: "7px 13px",
+   420→   420→                fontSize: 12.5, fontWeight: 700, cursor: "pointer",
+   421→   421→                background: view === key ? C.blue : "transparent", color: view === key ? "#fff" : C.dim,
+   422→   422→              }}>
+   423→   423→                <Icon size={13} /> {label}
+   424→   424→                {!!count && <span style={{ background: view === key ? "rgba(255,255,255,0.3)" : C.red, color: "#fff", fontSize: 10, padding: "1px 6px", borderRadius: 999 }}>{count}</span>}
+   425→   425→              </button>
+   426→   426→            ))}
+   427→   427→          </div>
+   428→   428→
+   429→   429→          <button onClick={() => setSession(null)} style={{ background: "none", border: "none", color: C.dim, cursor: "pointer", display: "flex" }}><LogOut size={16} /></button>
+   430→   430→        </div>
+   431→   431→      </div>
+   432→   432→
+   433→   433→      <div style={{ maxWidth: 1080, margin: "0 auto", padding: "26px 20px" }}>
+   434→   434→        {view === "chat" && (
+   435→   435→          <>
+   436→   436→            {emergency && <EmergencyAlert reason={emergency.reason} onDismiss={() => setEmergency(null)} />}
+   437→   437→            <Card style={{ overflow: "hidden" }}>
+   438→   438→              <div ref={scrollRef} className="ma-scroll" style={{ height: 420, overflowY: "auto", padding: 24, display: "flex", flexDirection: "column", gap: 12 }}>
+   439→   439→                {messages.map((m, i) => (
+   440→   440→                  <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
+   441→   441→                    <div style={{
+   442→   442→                      maxWidth: "72%", padding: "10px 15px", borderRadius: 16, fontSize: 14, lineHeight: 1.55,
+   443→   443→                      background: m.role === "user" ? C.blue : "rgba(255,255,255,0.05)", color: "#fff",
+   444→   444→                      border: m.role === "user" ? "none" : `1px solid ${C.border}`,
+   445→   445→                      borderBottomRightRadius: m.role === "user" ? 4 : 16, borderBottomLeftRadius: m.role === "user" ? 16 : 4,
+   446→   446→                    }}>{m.content}</div>
+   447→   447→                  </div>
+   448→   448→                ))}
+   449→   449→                {thinking && <div style={{ display: "flex", gap: 8, alignItems: "center" }}><CapsuleLoader /> <span style={{ fontSize: 12, color: C.dim }}>thinking…</span></div>}
+   450→   450→              </div>
+   451→   451→              <div style={{ borderTop: `1px solid ${C.border}`, padding: 14, display: "flex", gap: 10, alignItems: "center" }}>
+   452→   452→                <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+   453→   453→                  placeholder="Describe how you're feeling…"
+   454→   454→                  style={{ flex: 1, background: "rgba(255,255,255,0.04)", border: `1px solid ${C.border}`, borderRadius: 999, padding: "11px 18px", fontSize: 14, color: C.ink }} />
+   455→   455→                <PillButton tone="blue" onClick={sendMessage} disabled={thinking} style={{ padding: "11px 14px" }}><Send size={16} /></PillButton>
+   456→   456→                {exchangeCount >= 2 && <PillButton tone="outline" onClick={generateSummary} disabled={thinking}><Sparkles size={14} color={C.blue} /> End & summarize</PillButton>}
+   457→   457→              </div>
+   458→   458→            </Card>
+   459→   459→          </>
+   460→   460→        )}
+   461→   461→
+   462→   462→        {view === "medicine" && (
+   463→   463→          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+   464→   464→            <Card style={{ padding: 22 }}>
+   465→   465→              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+   466→   466→                <div style={{ width: 42, height: 42, borderRadius: 12, background: C.blueSoft, display: "flex", alignItems: "center", justifyContent: "center" }}>
+   467→   467→                  <ScanLine size={20} color={C.blue} />
+   468→   468→                </div>
+   469→   469→                <div>
+   470→   470→                  <div style={{ fontWeight: 800, fontSize: 17 }}>Medicine Assistant</div>
+   471→   471→                  <div style={{ fontSize: 12.5, color: C.dim, marginTop: 2 }}>Point your camera at a medicine strip, box, or pill — or upload a photo</div>
+   472→   472→                </div>
+   473→   473→              </div>
+   474→   474→              <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginTop: 14, background: C.blueSoft, borderRadius: 12, padding: 12 }}>
+   475→   475→                <ShieldAlert size={15} color={C.blue} style={{ flexShrink: 0, marginTop: 1 }} />
+   476→   476→                <div style={{ fontSize: 12, color: C.ink, lineHeight: 1.5 }}>
+   477→   477→                  For informational purposes only. AI photo identification isn't always accurate, especially for
+   478→   478→                  loose or unmarked pills — always confirm with a pharmacist or doctor before taking anything.
+   479→   479→                </div>
+   480→   480→              </div>
+   481→   481→            </Card>
+   482→   482→
+   483→   483→            {lensError && (
+   484→   484→              <Card style={{ padding: 16, background: C.redSoft, border: `1px solid rgba(226,73,91,0.4)`, display: "flex", alignItems: "center", gap: 10 }}>
+   485→   485→                <AlertTriangle size={16} color={C.red} />
+   486→   486→                <span style={{ fontSize: 13, color: C.ink }}>{lensError}</span>
+   487→   487→              </Card>
+   488→   488→            )}
+   489→   489→
+   490→   490→            <Card style={{ padding: 22 }}>
+   491→   491→              {!cameraActive && !lensPhoto && (
+   492→   492→                <div style={{ textAlign: "center", padding: "34px 16px" }}>
+   493→   493→                  <div style={{ width: 56, height: 56, borderRadius: 16, background: C.blueSoft, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+   494→   494→                    <Camera size={26} color={C.blue} />
+   495→   495→                  </div>
+   496→   496→                  <div style={{ fontSize: 14, color: C.dim, marginBottom: 18 }}>No photo yet — use your camera or upload one to get started</div>
+   497→   497→                  <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+   498→   498→                    <PillButton tone="blue" onClick={startCamera}><Camera size={15} /> Use Camera</PillButton>
+   499→   499→                    <PillButton tone="outline" onClick={() => fileInputRef.current?.click()}><Upload size={15} /> Upload Photo</PillButton>
+   500→   500→                    <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileUpload} style={{ display: "none" }} />
+   501→   501→                  </div>
+   502→   502→                </div>
+   503→   503→              )}
+   504→   504→
+   505→   505→              {cameraActive && (
+   506→   506→                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
+   507→   507→                  <video ref={videoRef} autoPlay playsInline
+   508→   508→                    style={{ width: "100%", maxWidth: 480, borderRadius: 16, background: "#000", border: `1px solid ${C.border}` }} />
+   509→   509→                  <div style={{ display: "flex", gap: 10 }}>
+   510→   510→                    <PillButton tone="blue" onClick={capturePhoto}><ScanLine size={15} /> Capture</PillButton>
+   511→   511→                    <PillButton tone="outline" onClick={stopCamera}><X size={15} /> Cancel</PillButton>
+   512→   512→                  </div>
+   513→   513→                </div>
+   514→   514→              )}
+   515→   515→
+   516→   516→              {lensPhoto && !cameraActive && (
+   517→   517→                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
+   518→   518→                  <img src={lensPhoto.dataUrl} alt="Captured medicine"
+   519→   519→                    style={{ width: "100%", maxWidth: 380, borderRadius: 16, border: `1px solid ${C.border}`, objectFit: "cover" }} />
+   520→   520→                  <input value={lensNote} onChange={(e) => setLensNote(e.target.value)}
+   521→   521→                    placeholder="Optional: anything you already know (e.g. strip color, where you found it)…"
+   522→   522→                    style={{ width: "100%", maxWidth: 420, background: "rgba(255,255,255,0.04)", border: `1px solid ${C.border}`, borderRadius: 999, padding: "10px 16px", fontSize: 13, color: C.ink }} />
+   523→   523→                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "center" }}>
+   524→   524→                    <PillButton tone="blue" onClick={identifyMedicine} disabled={lensThinking}>
+   525→   525→                      {lensThinking ? <CapsuleLoader /> : <Sparkles size={15} />} {lensThinking ? "Analyzing…" : "Identify Medicine"}
+   526→   526→                    </PillButton>
+   527→   527→                    <PillButton tone="outline" onClick={resetLens}><RotateCcw size={15} /> Retake</PillButton>
+   528→   528→                  </div>
+   529→   529→                </div>
+   530→   530→              )}
+   531→   531→            </Card>
+   532→   532→
+   533→   533→            {lensResult && (
+   534→   534→              <Card style={{ padding: 20 }}>
+   535→   535→                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+   536→   536→                  <Sparkles size={15} color={C.blue} />
+   537→   537→                  <span style={{ fontWeight: 800, fontSize: 13.5 }}>AI Identification</span>
+   538→   538→                </div>
+   539→   539→                <div style={{ fontSize: 13.5, lineHeight: 1.6, color: C.ink }}>{lensResult}</div>
+   540→   540→                <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 14, fontSize: 11, color: C.dim }}>
+   541→   541→                  <ShieldCheck size={12} /> Educational only — a pharmacist or doctor always makes the final call.
+   542→   542→                </div>
+   543→   543→              </Card>
+   544→   544→            )}
+   545→   545→
+   546→   546→            <canvas ref={canvasRef} style={{ display: "none" }} />
+   547→   547→          </div>
+   548→   548→        )}
+   549→   549→
+   550→   550→        {view === "doctor" && (
+   551→   551→          <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: 18 }}>
+   552→   552→            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+   553→   553→              <div style={{ fontSize: 11.5, fontWeight: 700, color: C.dim, textTransform: "uppercase", letterSpacing: 0.5 }}>Active Queue ({pendingCount})</div>
+   554→   554→              {summaries.filter((s) => s.status === "pending" || s.status === "emergency").length === 0 && (
+   555→   555→                <Card style={{ padding: 16, fontSize: 13, color: C.dim, borderStyle: "dashed" }}>No active cases right now.</Card>
+   556→   556→              )}
+   557→   557→              {summaries.filter((s) => s.status === "pending" || s.status === "emergency").map((s) => (
+   558→   558→                <button key={s.id} onClick={() => setSelectedSummaryId(s.id)} style={{ textAlign: "left", cursor: "pointer", border: "none", padding: 0, background: "none" }}>
+   559→   559→                  <Card style={{ padding: 13, borderLeft: `4px solid ${s.status === "emergency" ? C.red : C.blue}`, borderColor: selectedSummary?.id === s.id ? C.borderStrong : C.border }}>
+   560→   560→                    <div style={{ fontWeight: 700, fontSize: 13.5, marginBottom: 6, color: C.ink }}>{s.chiefComplaint}</div>
+   561→   561→                    <StatusBadge status={s.status} />
+   562→   562→                  </Card>
+   563→   563→                </button>
+   564→   564→              ))}
+   565→   565→            </div>
+   566→   566→
+   567→   567→            <Card style={{ padding: 22 }}>
+   568→   568→              {!selectedSummary ? (
+   569→   569→                <div style={{ color: C.dim, fontSize: 14 }}>Select a case from the queue to review.</div>
+   570→   570→              ) : (
+   571→   571→                <>
+   572→   572→                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+   573→   573→                    <div>
+   574→   574→                      <div style={{ fontWeight: 800, fontSize: 19 }}>{selectedSummary.chiefComplaint}</div>
+   575→   575→                      <div style={{ fontSize: 12, color: C.dim, marginTop: 4 }}>Duration: {selectedSummary.duration} &middot; {selectedSummary.createdAt}</div>
+   576→   576→                    </div>
+   577→   577→                    <StatusBadge status={selectedSummary.status} />
+   578→   578→                  </div>
+   579→   579→
+   580→   580→                  <div style={{ marginTop: 16, padding: 14, background: C.blueSoft, border: `1px solid ${C.border}`, borderRadius: 12, fontSize: 13.5 }}>
+   581→   581→                    <ClipboardList size={14} style={{ verticalAlign: -2, marginRight: 6 }} color={C.blue} />
+   582→   582→                    Suggested department: <strong>{selectedSummary.department}</strong>
+   583→   583→                  </div>
+   584→   584→
+   585→   585→                  {selectedSummary.flags?.length > 0 && (
+   586→   586→                    <div style={{ marginTop: 14 }}>
+   587→   587→                      <div style={{ fontSize: 11, fontWeight: 700, color: C.dim, textTransform: "uppercase", marginBottom: 6 }}>Flagged concerns</div>
+   588→   588→                      {selectedSummary.flags.map((f, i) => (
+   589→   589→                        <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13.5, marginBottom: 4 }}>
+   590→   590→                          <AlertTriangle size={13} color={C.red} /> {f}
+   591→   591→                        </div>
+   592→   592→                      ))}
+   593→   593→                    </div>
+   594→   594→                  )}
+   595→   595→
+   596→   596→                  <div style={{ marginTop: 14, fontSize: 13.5, color: C.dim, fontStyle: "italic" }}>"{selectedSummary.aiNote}"</div>
+   597→   597→
+   598→   598→                  <textarea placeholder="Add your clinical notes…" value={selectedSummary.doctorNotes}
+   599→   599→                    onChange={(e) => updateSummary(selectedSummary.id, { doctorNotes: e.target.value })}
+   600→   600→                    style={{ width: "100%", marginTop: 16, minHeight: 70, background: "rgba(255,255,255,0.04)", border: `1px solid ${C.border}`, borderRadius: 12, padding: 10, fontSize: 13.5, color: C.ink }} />
+   601→   601→
+   602→   602→                  <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+   603→   603→                    <PillButton tone="blue" onClick={() => updateSummary(selectedSummary.id, { status: "solved" })}><CheckCircle2 size={15} /> Confirm & Solve</PillButton>
+   604→   604→                    <PillButton tone="red" onClick={() => updateSummary(selectedSummary.id, { status: "unsolved" })}><XCircle size={15} /> Reject</PillButton>
+   605→   605→                    {selectedSummary.status !== "emergency" && (
+   606→   606→                      <PillButton tone="outline" onClick={() => updateSummary(selectedSummary.id, { status: "emergency" })}><Siren size={14} color={C.red} /> Escalate</PillButton>
+   607→   607→                    )}
+   608→   608→                  </div>
+   609→   609→                  <div style={{ fontSize: 11, color: C.dim, marginTop: 8 }}>AI assists triage — final decision always confirmed by the doctor.</div>
+   610→   610→                </>
+   611→   611→              )}
+   612→   612→            </Card>
+   613→   613→          </div>
+   614→   614→        )}
+   615→   615→
+   616→   616→        {view === "staff" && (
+   617→   617→          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+   618→   618→            <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+   619→   619→              <Card style={{ padding: 16, flex: 1, minWidth: 160 }}>
+   620→   620→                <div style={{ fontSize: 11.5, color: C.dim, fontWeight: 700, textTransform: "uppercase" }}>Total cases</div>
+   621→   621→                <div style={{ fontSize: 28, fontWeight: 800, marginTop: 6, color: C.blue }}>{summaries.length}</div>
+   622→   622→              </Card>
+   623→   623→              <Card style={{ padding: 16, flex: 1, minWidth: 160 }}>
+   624→   624→                <div style={{ fontSize: 11.5, color: C.dim, fontWeight: 700, textTransform: "uppercase" }}>Emergency</div>
+   625→   625→                <div style={{ fontSize: 28, fontWeight: 800, marginTop: 6, color: C.red }}>{summaries.filter((s) => s.status === "emergency").length}</div>
+   626→   626→              </Card>
+   627→   627→              <Card style={{ padding: 16, flex: 1, minWidth: 160 }}>
+   628→   628→                <div style={{ fontSize: 11.5, color: C.dim, fontWeight: 700, textTransform: "uppercase" }}>Solved</div>
+   629→   629→                <div style={{ fontSize: 28, fontWeight: 800, marginTop: 6, color: C.ink }}>{summaries.filter((s) => s.status === "solved").length}</div>
+   630→   630→              </Card>
+   631→   631→            </div>
+   632→   632→
+   633→   633→            <div style={{ fontSize: 11.5, fontWeight: 700, color: C.dim, textTransform: "uppercase" }}>Cases</div>
+   634→   634→            {summaries.length === 0 && <Card style={{ padding: 16, fontSize: 13, color: C.dim, borderStyle: "dashed" }}>No cases yet.</Card>}
+   635→   635→            {summaries.map((s) => (
+   636→   636→              <Card key={s.id} style={{ padding: 16, borderLeft: `4px solid ${STATUS_STYLE[s.status].color}` }}>
+   637→   637→                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+   638→   638→                  <div>
+   639→   639→                    <div style={{ fontWeight: 700, fontSize: 14 }}>{s.chiefComplaint} — {s.department}</div>
+   640→   640→                    <div style={{ fontSize: 11.5, color: C.dim, marginTop: 4, display: "flex", gap: 8, alignItems: "center" }}>
+   641→   641→                      <Clock size={12} /> {s.duration} <StatusBadge status={s.status} />
+   642→   642→                    </div>
+   643→   643→                  </div>
+   644→   644→                  <PillButton tone="soft" onClick={() => draftReminder(s)} disabled={thinking}><FileText size={13} /> Draft reminder</PillButton>
+   645→   645→                </div>
+   646→   646→                {reminders[s.id] && <div style={{ marginTop: 10, background: "rgba(255,255,255,0.03)", border: `1px solid ${C.border}`, borderRadius: 10, padding: 10, fontSize: 13 }}>{reminders[s.id]}</div>}
+   647→   647→              </Card>
+   648→   648→            ))}
+   649→   649→          </div>
+   650→   650→        )}
+   651→   651→
+   652→   652→        {view === "history" && (
+   653→   653→          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+   654→   654→            <div style={{ display: "flex", gap: 6 }}>
+   655→   655→              {["all", "solved", "unsolved"].map((f) => (
+   656→   656→                <button key={f} onClick={() => setHistoryFilter(f)} style={{
+   657→   657→                  border: "none", borderRadius: 999, padding: "7px 14px", fontSize: 12.5, fontWeight: 700, cursor: "pointer",
+   658→   658→                  background: historyFilter === f ? C.blue : "rgba(255,255,255,0.05)", color: historyFilter === f ? "#fff" : C.dim, textTransform: "capitalize",
+   659→   659→                }}>{f}</button>
+   660→   660→              ))}
+   661→   661→            </div>
+   662→   662→            {filteredHistory.length === 0 && <Card style={{ padding: 16, fontSize: 13, color: C.dim, borderStyle: "dashed" }}>No resolved cases yet — confirm or reject a case in the Doctor tab.</Card>}
+   663→   663→            <div style={{ display: "flex", flexDirection: "column" }}>
+   664→   664→              {filteredHistory.map((s, i) => (
+   665→   665→                <div key={s.id} style={{ display: "flex", gap: 14 }}>
+   666→   666→                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+   667→   667→                    <div style={{ width: 10, height: 10, borderRadius: 999, background: STATUS_STYLE[s.status].color, marginTop: 6 }} />
+   668→   668→                    {i < filteredHistory.length - 1 && <div style={{ width: 2, flex: 1, background: C.border }} />}
+   669→   669→                  </div>
+   670→   670→                  <Card style={{ padding: 14, marginBottom: 14, flex: 1 }}>
+   671→   671→                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+   672→   672→                      <div style={{ fontWeight: 700, fontSize: 14 }}>{s.chiefComplaint}</div>
+   673→   673→                      <StatusBadge status={s.status} />
+   674→   674→                    </div>
+   675→   675→                    <div style={{ fontSize: 12, color: C.dim, marginTop: 4 }}>{s.department} &middot; {s.createdAt}</div>
+   676→   676→                    {s.doctorNotes && <div style={{ fontSize: 12.5, marginTop: 8 }}>Doctor notes: {s.doctorNotes}</div>}
+   677→   677→                  </Card>
+   678→   678→                </div>
+   679→   679→              ))}
+   680→   680→            </div>
+   681→   681→          </div>
+   682→   682→        )}
+   683→   683→
+   684→   684→        {view === "support" && (
+   685→   685→          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+   686→   686→            <Card style={{ padding: 20, background: C.redSoft, border: `1px solid rgba(226,73,91,0.4)`, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+   687→   687→              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+   688→   688→                <div style={{ width: 44, height: 44, borderRadius: 12, background: "rgba(0,0,0,0.25)", display: "flex", alignItems: "center", justifyContent: "center" }}><Siren size={22} color={C.red} /></div>
+   689→   689→                <div>
+   690→   690→                  <div style={{ fontWeight: 800, fontSize: 15, color: C.red }}>Need immediate help?</div>
+   691→   691→                  <div style={{ fontSize: 12.5, color: C.ink }}>National ambulance number — available 24/7</div>
+   692→   692→                </div>
+   693→   693→              </div>
+   694→   694→              <PillButton tone="red" style={{ padding: "11px 20px" }}><PhoneCall size={15} /> Call Ambulance — 108</PillButton>
+   695→   695→            </Card>
+   696→   696→
+   697→   697→            <div style={{ fontSize: 11.5, fontWeight: 700, color: C.dim, textTransform: "uppercase" }}>Nearby hospitals</div>
+   698→   698→            {NEARBY_HOSPITALS.map((h, i) => (
+   699→   699→              <Card key={i} style={{ padding: 16, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+   700→   700→                <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+   701→   701→                  <div style={{ width: 40, height: 40, borderRadius: 10, background: C.blueSoft, display: "flex", alignItems: "center", justifyContent: "center" }}><MapPin size={18} color={C.blue} /></div>
+   702→   702→                  <div>
+   703→   703→                    <div style={{ fontWeight: 700, fontSize: 14 }}>{h.name}</div>
+   704→   704→                    <div style={{ fontSize: 12, color: C.dim, marginTop: 2 }}>{h.type} &middot; {h.distance} &middot; ~{h.eta}</div>
+   705→   705→                  </div>
+   706→   706→                </div>
+   707→   707→                <div style={{ display: "flex", gap: 8 }}>
+   708→   708→                  <PillButton tone="outline"><PhoneCall size={13} /> Call</PillButton>
+   709→   709→                  <PillButton tone="soft"><Navigation size={13} /> Directions</PillButton>
+   710→   710→                </div>
+   711→   711→              </Card>
+   712→   712→            ))}
+   713→   713→          </div>
+   714→   714→        )}
+   715→   715→      </div>
+   716→   716→    </div>
+   717→   717→  );
+   718→   718→}
+   719→   719→
