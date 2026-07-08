@@ -49,6 +49,7 @@ export function AppShell() {
   const qc = useQueryClient();
 
   // Preload active case count for the Doctor tab badge.
+  // Polls every 5s so the count stays fresh even without realtime (e.g. Vercel).
   const { data: activeCount } = useQuery({
     queryKey: ['cases', 'active-count'],
     queryFn: async () => {
@@ -57,7 +58,7 @@ export function AppShell() {
       const data = (await res.json()) as { cases: CaseItem[] };
       return (data.cases ?? []).length;
     },
-    refetchInterval: 20_000,
+    refetchInterval: 5_000,
   });
 
   // Realtime: invalidate cases queries on any case event.

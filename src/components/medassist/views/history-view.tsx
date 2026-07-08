@@ -33,7 +33,7 @@ export function HistoryView() {
   const { data, isLoading, error } = useQuery({
     queryKey: ['cases', 'resolved'],
     queryFn: fetchResolvedCases,
-    refetchInterval: 25_000,
+    refetchInterval: 5_000,
   });
 
   const items = useMemo(() => {

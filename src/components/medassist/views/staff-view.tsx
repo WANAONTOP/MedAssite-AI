@@ -45,7 +45,7 @@ export function StaffView() {
   const { data, isLoading, error } = useQuery({
     queryKey: ['cases', 'all'],
     queryFn: fetchAllCases,
-    refetchInterval: 20_000,
+    refetchInterval: 5_000,
   });
 
   const cases = useMemo(() => data ?? [], [data]);

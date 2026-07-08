@@ -9,6 +9,10 @@ import type { CaseItem } from '@/lib/types';
  * Emits nothing; listens for `case:created` and `case:updated` and invokes callbacks.
  *
  * Connection rule (per gateway): use `io('/?XTransformPort=3003')`, path is `/`.
+ *
+ * On Vercel (or any environment without the mini-service), set
+ * NEXT_PUBLIC_REALTIME_ENABLED=false (or leave unset) — the hook becomes a
+ * no-op and the app relies on TanStack Query polling instead.
  */
 export function useRealtimeCases(opts: {
   onCreated?: (c: CaseItem) => void;
@@ -16,6 +20,7 @@ export function useRealtimeCases(opts: {
 }) {
   const { onCreated, onUpdated } = opts;
   const cbRef = useRef({ onCreated, onUpdated });
+  const enabled = process.env.NEXT_PUBLIC_REALTIME_ENABLED === 'true';
 
   // Keep latest callbacks in a ref (in an effect, not during render).
   useEffect(() => {
@@ -26,12 +31,14 @@ export function useRealtimeCases(opts: {
   const socketRef = useRef<Socket | null>(null);
 
   useEffect(() => {
+    if (!enabled) return; // no-op when realtime is disabled (e.g. on Vercel)
+
     const socket = io('/?XTransformPort=3003', {
       transports: ['websocket', 'polling'],
       forceNew: true,
       reconnection: true,
-      reconnectionAttempts: 8,
-      reconnectionDelay: 1200,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 2000,
       timeout: 10000,
     });
     socketRef.current = socket;
@@ -47,7 +54,7 @@ export function useRealtimeCases(opts: {
       socket.disconnect();
       socketRef.current = null;
     };
-  }, []);
+  }, [enabled]);
 
-  return { connected, socket: socketRef };
+  return { connected: connected && enabled, socket: socketRef };
 }

@@ -128,3 +128,60 @@ Built mobile-first with a sticky footer safety disclaimer on every screen.
 ## 📝 License
 
 MIT — built for the TakeOver'26 Hackathon.
+
+---
+
+## ☁️ Deploying to Vercel
+
+The app is Vercel-ready. Follow these steps:
+
+### 1. Create a Postgres database
+The app uses Prisma. On Vercel you need a real Postgres database (SQLite won't
+survive serverless function restarts). Easiest option:
+
+- Go to **https://neon.tech** → sign up → create a free project → copy the
+  connection string (looks like `postgresql://user:pass@ep-xxx.neon.tech/dbname?sslmode=require`)
+
+Alternatively, use **Vercel Postgres** (Storage tab in your Vercel dashboard).
+
+### 2. Push the schema to your database
+Run locally with your Postgres `DATABASE_URL`:
+```bash
+DATABASE_URL="postgresql://..." bun run db:push
+```
+
+### 3. Import the repo on Vercel
+- Go to **https://vercel.com/new**
+- Import your GitHub repo (`WANAONTOP/MedAssite-AI`)
+- Vercel auto-detects Next.js — no build settings needed
+
+### 4. Set environment variables
+In **Vercel → Project → Settings → Environment Variables**, add:
+
+| Variable | Value |
+|----------|-------|
+| `DATABASE_URL` | your Postgres connection string |
+| `GEMINI_API_KEY` | your Google Gemini API key (get one at https://aistudio.google.com/apikey) |
+
+> Do **not** set `NEXT_PUBLIC_REALTIME_ENABLED` — the app uses 5-second polling
+> on Vercel (the Socket.io mini-service can't run in serverless).
+
+### 5. Deploy
+Click **Deploy**. Vercel runs `postinstall` (which auto-detects Postgres from
+`DATABASE_URL` and swaps the Prisma provider, then runs `prisma generate`) and
+builds with `next build`.
+
+### How the provider auto-switch works
+`scripts/sync-schema-provider.mjs` runs as a `postinstall` hook. It reads
+`DATABASE_URL`:
+- Starts with `file:` → Prisma provider = `sqlite` (local dev)
+- Starts with `postgres` → Prisma provider = `postgresql` (Vercel/production)
+
+No manual schema edits needed.
+
+### AI provider
+The app uses **Google Gemini** (`gemini-2.0-flash`) for both text (triage chat,
+case summaries, SMS reminders) and vision (medicine image identification), via
+`@google/genai`. Set `GEMINI_API_KEY` — if Gemini is unavailable, it gracefully
+falls back to the `z-ai-web-dev-sdk` (sandbox only).
+

@@ -32,7 +32,7 @@ export function DoctorView() {
   const { data, isLoading, error } = useQuery({
     queryKey: ['cases', 'active'],
     queryFn: () => fetchCases('active=true'),
-    refetchInterval: 20_000,
+    refetchInterval: 5_000,
   });
 
   const cases = useMemo(
